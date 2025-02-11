@@ -9,8 +9,18 @@
 #include "inc/ssd1306.h"
 #include "hardware/i2c.h"
 
-#define LED_VERMELHO 13          // Define o pino do LED
-#define LED_VERDE 11          // Define o pino do LED
+// Estrutura de um produto
+struct Produto {
+    char nome[20];
+    float preco;
+    float promocao;
+};
+
+
+
+
+#define LED_VERMELHO 13          // Define o pino do LED de falha de Conexão
+#define LED_VERDE 11          // Define o pino do LED de conexão bem sucedida 
 #define WIFI_SSID "Vava"  // Substitua pelo nome da sua rede Wi-Fi
 #define WIFI_PASS "Akira#@2718" // Substitua pela senha da sua rede Wi-Fi
 
@@ -78,6 +88,36 @@ void exibirMensagem(char *mensagem[], uint num_mensagens, uint8_t *ssd, struct r
     render_on_display(ssd, frame_area);  // Atualiza o display com o novo conteúdo
 }
 
+void exibirProduto(struct Produto produto, uint8_t *ssd, struct render_area *frame_area) {
+    // Zera o display
+    memset(ssd, 0, ssd1306_buffer_length);
+    render_on_display(ssd, frame_area);
+
+    int y = 0;
+    int largura_palavra = 8 * strlen(produto.nome);
+    int inicio = (128 - largura_palavra) / 2;
+
+    // Desenha o nome do produto e a linha de separação
+    ssd1306_draw_string(ssd, inicio, y, produto.nome);
+    ssd1306_draw_line(ssd, 0, 8, 127, 8, true);
+
+    if (produto.promocao > 0) {
+        char promocao[10];
+        char preco[10];
+
+        sprintf(promocao, "R$ %.2f", produto.promocao);  // Converte float para string com 2 casas decimais
+        sprintf(preco, "R$ %.2f", produto.preco);  
+
+        ssd1306_draw_string(ssd, 60, 32, promocao);
+        ssd1306_draw_string(ssd, 25, 50, preco);
+        ssd1306_draw_line(ssd, 24, 40, 70, 60, true);
+    }
+    
+
+    
+
+    render_on_display(ssd, frame_area);  // Atualiza o display com o novo conteúdo
+}
 
 // Função de callback para processar requisições HTTP
 static err_t http_callback(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err) {
@@ -133,6 +173,14 @@ int main() {
     // Configura o LED que indica que o Wifi foi conectado com sucesso
     gpio_init(LED_VERDE);
     gpio_set_dir(LED_VERDE, GPIO_OUT);
+
+    // Produto para exemplo
+    struct Produto produto1;
+
+    strcpy(produto1.nome, "Feijao Preto");
+    produto1.preco = 8.98;
+    produto1.promocao = 6.75;
+
 
     // Inicialização do i2c
     i2c_init(i2c1, ssd1306_i2c_clock * 1000);
@@ -202,7 +250,10 @@ int main() {
     memset(ssd, 0, ssd1306_buffer_length);
     render_on_display(ssd, &frame_area);
 
-    exibirMensagem(mensagem, 2, ssd, &frame_area);
+    // exibirMensagem(mensagem, 2, ssd, &frame_area);
+    exibirProduto(produto1, ssd, &frame_area);
+    // ssd1306_draw_line(ssd, 10, 32, 100, 32, true);
+    // render_on_display(ssd, &frame_area);  // Atualiza o display com o novo conteúdo
     
     // Loop principal
     while (true) {
