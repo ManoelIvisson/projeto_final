@@ -8,6 +8,7 @@
 #include "pico/binary_info.h"
 #include "inc/ssd1306.h"
 #include "hardware/i2c.h"
+#include "hardware/adc.h"
 
 // Estrutura de um produto
 struct Produto {
@@ -16,7 +17,7 @@ struct Produto {
     float promocao;
 };
 
-
+uint cliente_presente = 0;
 
 
 #define LED_VERMELHO 13          // Define o pino do LED de falha de Conexão
@@ -164,6 +165,16 @@ static void start_http_server(void) {
     printf("Servidor HTTP rodando na porta 80...\n");
 }
 
+void gerenciadorInterrupcoes(uint gpio, uint32_t events){
+    static uint32_t ultimo_tempo = 0;
+    uint32_t tempo_atual = to_ms_since_boot(get_absolute_time());
+
+    if (tempo_atual - ultimo_tempo < 200) return; // Debounce de 200ms
+    ultimo_tempo = tempo_atual;
+
+    cliente_presente = !cliente_presente;
+}
+
 int main() {
     // Configura o LED que indica que o Wifi ainda não foi conectado
     gpio_init(LED_VERMELHO);
@@ -241,7 +252,11 @@ int main() {
     printf("Wi-Fi conectado! Galera\n");
     printf("Para ligar ou desligar o LED acesse o Endereço IP seguido de /led/on ou /led/off\n");
 
+    // Configuração do Joystick
+    adc_init();
 
+    adc_gpio_init(26);
+    adc_gpio_init(27);
 
     // Inicia o servidor HTTP
     start_http_server();
@@ -249,15 +264,33 @@ int main() {
     // zera o display inteiro
     memset(ssd, 0, ssd1306_buffer_length);
     render_on_display(ssd, &frame_area);
-
-    // exibirMensagem(mensagem, 2, ssd, &frame_area);
-    exibirProduto(produto1, ssd, &frame_area);
-    // ssd1306_draw_line(ssd, 10, 32, 100, 32, true);
-    // render_on_display(ssd, &frame_area);  // Atualiza o display com o novo conteúdo
     
     // Loop principal
     while (true) {
         cyw43_arch_poll();  // Necessário para manter o Wi-Fi ativo
+
+        // Lendo valores dos eixos do Joystick
+        adc_select_input(0);
+        uint adc_y_raw = adc_read();
+
+        adc_select_input(1);
+        uint adc_x_raw = adc_read();
+        
+        if (adc_y_raw > 4000) {
+            if (!cliente_presente) {
+                exibirProduto(produto1, ssd, &frame_area);
+                cliente_presente = 1;
+            }
+        } else if (adc_y_raw < 100) {
+            if (cliente_presente) {
+                // zera o display inteiro
+                memset(ssd, 0, ssd1306_buffer_length);
+                render_on_display(ssd, &frame_area);
+                cliente_presente = 0;
+            }
+        }
+        
+
         sleep_ms(100);
     }
 
