@@ -7,10 +7,10 @@
 #include <ctype.h>
 #include "pico/binary_info.h"
 #include "inc/ssd1306.h"
-// #include "inc/ssd1306_font.h"
 #include "hardware/i2c.h"
 
-#define LED_PIN 12          // Define o pino do LED
+#define LED_VERMELHO 13          // Define o pino do LED
+#define LED_VERDE 11          // Define o pino do LED
 #define WIFI_SSID "Vava"  // Substitua pelo nome da sua rede Wi-Fi
 #define WIFI_PASS "Akira#@2718" // Substitua pela senha da sua rede Wi-Fi
 
@@ -89,41 +89,6 @@ static err_t http_callback(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_
         return ERR_OK;
     }
 
-    // Processa a requisição HTTP
-    char *request = (char *)p->payload;
-
-    if (strstr(request, "GET /led/on")) {
-        gpio_put(LED_PIN, 1);  // Liga o LED
-    } else if (strstr(request, "GET /led/off")) {
-        gpio_put(LED_PIN, 0);  // Desliga o LED
-    } else if (strstr(request, "POST /mensagem")) {
-        // Imprime toda a requisição para depuração
-        printf("Requisição recebida:\n%s\n", request);
-
-        // Encontra o início do corpo da requisição
-        char *body = strstr(request, "\r\n\r\n");
-        if (body) {
-            body += 4; // Pula os caracteres de nova linha
-
-            // Garante que há um corpo e ele não está vazio
-            if (strlen(body) > 0) {
-                printf("Corpo da requisição: %s\n", body);
-
-                // Procura pela mensagem
-                char *mensagem = strstr(body, "mensagem=");
-                if (mensagem) {
-                    mensagem += 9; // Pula "mensagem="
-
-                    printf("Mensagem recebida: %s\n", mensagem);
-                    display_mensagem[0] = mensagem;
-                    // ssd1306_draw_string_with_word_wrap(ssd, 5, 1, mensagem);
-                    exibirMensagem(display_mensagem, 1, ssd, &frame_area);
-                    memset(p->payload, 0, p->len);
-                }
-            }   
-        }
-    }
-
     // Envia a resposta HTTP
     tcp_write(tpcb, HTTP_RESPONSE, strlen(HTTP_RESPONSE), TCP_WRITE_FLAG_COPY);
 
@@ -160,6 +125,15 @@ static void start_http_server(void) {
 }
 
 int main() {
+    // Configura o LED que indica que o Wifi ainda não foi conectado
+    gpio_init(LED_VERMELHO);
+    gpio_set_dir(LED_VERMELHO, GPIO_OUT);
+    gpio_put(LED_VERMELHO, 1);
+
+    // Configura o LED que indica que o Wifi foi conectado com sucesso
+    gpio_init(LED_VERDE);
+    gpio_set_dir(LED_VERDE, GPIO_OUT);
+
     // Inicialização do i2c
     i2c_init(i2c1, ssd1306_i2c_clock * 1000);
     gpio_set_function(I2C_SDA, GPIO_FUNC_I2C);
@@ -211,14 +185,15 @@ int main() {
 
         mensagem[0] = "Conectado no IP";
         mensagem[1] = ip_str;
+
+        gpio_put(LED_VERMELHO, 0);
+        gpio_put(LED_VERDE, 1);
     }
 
     printf("Wi-Fi conectado! Galera\n");
     printf("Para ligar ou desligar o LED acesse o Endereço IP seguido de /led/on ou /led/off\n");
 
-    // Configura o LED como saída
-    gpio_init(LED_PIN);
-    gpio_set_dir(LED_PIN, GPIO_OUT);
+
 
     // Inicia o servidor HTTP
     start_http_server();
