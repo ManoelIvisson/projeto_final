@@ -35,30 +35,26 @@ pico_sdk_init()
 
 # Add executable. Default name is the project name, version 0.1
 
-add_executable(projeto_final projeto_final.c )
+add_executable(projeto_final projeto_final.c inc/ssd1306_i2c.c)
 
 pico_set_program_name(projeto_final "projeto_final")
 pico_set_program_version(projeto_final "0.1")
 
 # Modify the below lines to enable/disable output over UART/USB
 pico_enable_stdio_uart(projeto_final 0)
-pico_enable_stdio_usb(projeto_final 0)
+pico_enable_stdio_usb(projeto_final 1)
 
 # Add the standard library to the build
 target_link_libraries(projeto_final
-        pico_stdlib)
-
+        pico_stdlib    
+        pico_cyw43_arch_lwip_threadsafe_background
+        hardware_i2c
+        )
+        
 # Add the standard include files to the build
 target_include_directories(projeto_final PRIVATE
-        ${CMAKE_CURRENT_LIST_DIR}
+  ${CMAKE_CURRENT_LIST_DIR}
 )
-
-# Add any user requested libraries
-target_link_libraries(projeto_final 
-        hardware_i2c
-        hardware_clocks
-        
-        )
 
 pico_add_extra_outputs(projeto_final)
 

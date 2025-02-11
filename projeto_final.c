@@ -1,63 +1,240 @@
-#include <stdio.h>
+#include "pico/cyw43_arch.h"
 #include "pico/stdlib.h"
+#include "lwip/tcp.h"
+#include <string.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <ctype.h>
+#include "pico/binary_info.h"
+#include "inc/ssd1306.h"
+// #include "inc/ssd1306_font.h"
 #include "hardware/i2c.h"
-#include "hardware/clocks.h"
-#include "hardware/uart.h"
 
-// I2C defines
-// This example will use I2C0 on GPIO8 (SDA) and GPIO9 (SCL) running at 400KHz.
-// Pins can be changed, see the GPIO function select table in the datasheet for information on GPIO assignments
-#define I2C_PORT i2c0
-#define I2C_SDA 8
-#define I2C_SCL 9
+#define LED_PIN 12          // Define o pino do LED
+#define WIFI_SSID "Vava"  // Substitua pelo nome da sua rede Wi-Fi
+#define WIFI_PASS "Akira#@2718" // Substitua pela senha da sua rede Wi-Fi
+
+const uint I2C_SDA = 14;
+const uint I2C_SCL = 15;
+
+// Preparar área de renderização para o display (ssd1306_width pixels por ssd1306_n_pages páginas)
+struct render_area frame_area = {
+    start_column : 0,
+    end_column : ssd1306_width - 1,
+    start_page : 0,
+    end_page : ssd1306_n_pages - 1
+};
+
+uint8_t ssd[ssd1306_buffer_length];
+
+// Buffer para respostas HTTP
+#define HTTP_RESPONSE "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n" \
+                      "<!DOCTYPE html><html><body>" \
+                      "<h1>Controle do LED</h1>" \
+                      "<p><a href=\"/led/on\">Ligar LED</a></p>" \
+                      "<p><a href=\"/led/off\">Desligar LED</a></p>" \
+                      "<form action=\"/mensagem\" method=\"post\">" \
+                      "<input type=\"text\" name=\"mensagem\"/>" \
+                      "<input type=\"submit\" value=\"Enviar\"/>" \
+                      "</form>" \
+                      "</body></html>\r\n"
+
+void exibirMensagem(char *mensagem[], uint num_mensagens, uint8_t *ssd, struct render_area *frame_area) {
+    // Zera o display
+    memset(ssd, 0, ssd1306_buffer_length);
+    render_on_display(ssd, frame_area);
+
+    int x = 3;  // Posição inicial do texto
+    int y = 0;  // Linha inicial
+    int char_width = 8;  // Largura média de um caractere (ajuste se necessário)
+    int max_width = ssd1306_width - x;  // Largura máxima para o texto
+
+    for (int i = 0; i < num_mensagens; i++) {
+        char *str = mensagem[i];
+
+        while (*str) {  // Percorre a string caracter por caracter
+            if (x + char_width > max_width) {  // Se ultrapassar a largura do display
+                x = 3;   // Volta para a margem esquerda
+                y += 8;  // Vai para a próxima linha (altura de um caractere)
+                
+                if (y >= frame_area->end_page * 8) {  // Se atingir o final do display
+                    return;  // Para de desenhar
+                }
+            }
+
+            ssd1306_draw_char(ssd, x, y, *str);
+            x += char_width;  // Move a posição para a direita
+            str++;  // Passa para o próximo caractere
+        }
+
+        x = 3;   // Reinicia x para o início da linha
+        y += 8;  // Vai para a próxima linha após cada mensagem
+
+        if (y >= frame_area->end_page * 8) {  // Se atingir o final do display
+            break;  // Para de desenhar
+        }
+    }
+
+    render_on_display(ssd, frame_area);  // Atualiza o display com o novo conteúdo
+}
 
 
-// UART defines
-// By default the stdout UART is `uart0`, so we will use the second one
-#define UART_ID uart1
-#define BAUD_RATE 115200
+// Função de callback para processar requisições HTTP
+static err_t http_callback(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err) {
+    char *display_mensagem[80] = {};
 
-// Use pins 4 and 5 for UART1
-// Pins can be changed, see the GPIO function select table in the datasheet for information on GPIO assignments
-#define UART_TX_PIN 4
-#define UART_RX_PIN 5
+    if (p == NULL) {
+        // Cliente fechou a conexão
+        tcp_close(tpcb);
+        return ERR_OK;
+    }
 
+    // Processa a requisição HTTP
+    char *request = (char *)p->payload;
 
+    if (strstr(request, "GET /led/on")) {
+        gpio_put(LED_PIN, 1);  // Liga o LED
+    } else if (strstr(request, "GET /led/off")) {
+        gpio_put(LED_PIN, 0);  // Desliga o LED
+    } else if (strstr(request, "POST /mensagem")) {
+        // Imprime toda a requisição para depuração
+        printf("Requisição recebida:\n%s\n", request);
 
-int main()
-{
-    stdio_init_all();
+        // Encontra o início do corpo da requisição
+        char *body = strstr(request, "\r\n\r\n");
+        if (body) {
+            body += 4; // Pula os caracteres de nova linha
 
-    // I2C Initialisation. Using it at 400Khz.
-    i2c_init(I2C_PORT, 400*1000);
-    
+            // Garante que há um corpo e ele não está vazio
+            if (strlen(body) > 0) {
+                printf("Corpo da requisição: %s\n", body);
+
+                // Procura pela mensagem
+                char *mensagem = strstr(body, "mensagem=");
+                if (mensagem) {
+                    mensagem += 9; // Pula "mensagem="
+
+                    printf("Mensagem recebida: %s\n", mensagem);
+                    display_mensagem[0] = mensagem;
+                    // ssd1306_draw_string_with_word_wrap(ssd, 5, 1, mensagem);
+                    exibirMensagem(display_mensagem, 1, ssd, &frame_area);
+                    memset(p->payload, 0, p->len);
+                }
+            }   
+        }
+    }
+
+    // Envia a resposta HTTP
+    tcp_write(tpcb, HTTP_RESPONSE, strlen(HTTP_RESPONSE), TCP_WRITE_FLAG_COPY);
+
+    // Libera o buffer recebido
+    pbuf_free(p);
+
+    return ERR_OK;
+}
+
+// Callback de conexão: associa o http_callback à conexão
+static err_t connection_callback(void *arg, struct tcp_pcb *newpcb, err_t err) {
+    tcp_recv(newpcb, http_callback);  // Associa o callback HTTP
+    return ERR_OK;
+}
+
+// Função de setup do servidor TCP
+static void start_http_server(void) {
+    struct tcp_pcb *pcb = tcp_new();
+    if (!pcb) {
+        printf("Erro ao criar PCB\n");
+        return;
+    }
+
+    // Liga o servidor na porta 80
+    if (tcp_bind(pcb, IP_ADDR_ANY, 80) != ERR_OK) {
+        printf("Erro ao ligar o servidor na porta 80\n");
+        return;
+    }
+
+    pcb = tcp_listen(pcb);  // Coloca o PCB em modo de escuta
+    tcp_accept(pcb, connection_callback);  // Associa o callback de conexão
+
+    printf("Servidor HTTP rodando na porta 80...\n");
+}
+
+int main() {
+    // Inicialização do i2c
+    i2c_init(i2c1, ssd1306_i2c_clock * 1000);
     gpio_set_function(I2C_SDA, GPIO_FUNC_I2C);
     gpio_set_function(I2C_SCL, GPIO_FUNC_I2C);
     gpio_pull_up(I2C_SDA);
     gpio_pull_up(I2C_SCL);
-    // For more examples of I2C use see https://github.com/raspberrypi/pico-examples/tree/master/i2c
 
-    printf("System Clock Frequency is %d Hz\n", clock_get_hz(clk_sys));
-    printf("USB Clock Frequency is %d Hz\n", clock_get_hz(clk_usb));
-    // For more examples of clocks use see https://github.com/raspberrypi/pico-examples/tree/master/clocks
+    // Processo de inicialização completo do OLED SSD1306
+    ssd1306_init();
 
-    // Set up our UART
-    uart_init(UART_ID, BAUD_RATE);
-    // Set the TX and RX pins by using the function select on the GPIO
-    // Set datasheet for more information on function select
-    gpio_set_function(UART_TX_PIN, GPIO_FUNC_UART);
-    gpio_set_function(UART_RX_PIN, GPIO_FUNC_UART);
-    
-    // Use some the various UART functions to send out data
-    // In a default system, printf will also output via the default UART
-    
-    // Send out a string, with CR/LF conversions
-    uart_puts(UART_ID, " Hello, UART!\n");
-    
-    // For more examples of UART use see https://github.com/raspberrypi/pico-examples/tree/master/uart
+    calculate_render_area_buffer_length(&frame_area);
 
-    while (true) {
-        printf("Hello, world!\n");
-        sleep_ms(1000);
+    // zera o display inteiro
+    memset(ssd, 0, ssd1306_buffer_length);
+    render_on_display(ssd, &frame_area);
+
+    char *mensagem[2]; 
+
+    mensagem[0] = "Conectando no Wifi";
+    mensagem[1] = "Aguarde um momento";
+
+    exibirMensagem(mensagem, 2, ssd, &frame_area);
+
+    stdio_init_all();  // Inicializa a saída padrão
+    sleep_ms(10000);
+    printf("Iniciando servidor HTTP\n");
+
+    // Inicializa o Wi-Fi
+    if (cyw43_arch_init()) {
+        printf("Erro ao inicializar o Wi-Fi\n");
+        return 1;
     }
+
+    cyw43_arch_enable_sta_mode();
+    printf("Conectando ao Wi-Fi...\n");
+
+    if (cyw43_arch_wifi_connect_timeout_ms(WIFI_SSID, WIFI_PASS, CYW43_AUTH_WPA2_AES_PSK, 10000)) {
+        printf("Falha ao conectar ao Wi-Fi\n");
+        return 1;
+    }else {
+        printf("Connected.\n");
+        // Read the ip address in a human readable way
+        uint8_t *ip_address = (uint8_t*)&(cyw43_state.netif[0].ip_addr.addr);
+        printf("Endereço IP %d.%d.%d.%d\n", ip_address[0], ip_address[1], ip_address[2], ip_address[3]);
+
+        static char ip_str[20];  // Buffer para armazenar o IP formatado
+        snprintf(ip_str, sizeof(ip_str), "%d.%d.%d.%d", 
+                ip_address[0], ip_address[1], ip_address[2], ip_address[3]);
+
+        mensagem[0] = "Conectado no IP";
+        mensagem[1] = ip_str;
+    }
+
+    printf("Wi-Fi conectado! Galera\n");
+    printf("Para ligar ou desligar o LED acesse o Endereço IP seguido de /led/on ou /led/off\n");
+
+    // Configura o LED como saída
+    gpio_init(LED_PIN);
+    gpio_set_dir(LED_PIN, GPIO_OUT);
+
+    // Inicia o servidor HTTP
+    start_http_server();
+
+    // zera o display inteiro
+    memset(ssd, 0, ssd1306_buffer_length);
+    render_on_display(ssd, &frame_area);
+
+    exibirMensagem(mensagem, 2, ssd, &frame_area);
+    
+    // Loop principal
+    while (true) {
+        cyw43_arch_poll();  // Necessário para manter o Wi-Fi ativo
+        sleep_ms(100);
+    }
+
+    cyw43_arch_deinit();  // Desliga o Wi-Fi (não será chamado, pois o loop é infinito)
+    return 0;
 }
