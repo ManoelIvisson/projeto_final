@@ -35,6 +35,7 @@
 #define LWIP_NETIF_LINK_CALLBACK    1
 #define LWIP_NETIF_HOSTNAME         1
 #define LWIP_NETCONN                0
+#define LWIP_TIMEVAL_PRIVATE        0
 #define MEM_STATS                   0
 #define SYS_STATS                   0
 #define MEMP_STATS                  0
@@ -50,6 +51,7 @@
 #define LWIP_NETIF_TX_SINGLE_PBUF   1
 #define DHCP_DOES_ARP_CHECK         0
 #define LWIP_DHCP_DOES_ACD_CHECK    0
+#define LWIP_TCPIP_CORE_LOCKING     0
 
 #ifndef NDEBUG
 #define LWIP_DEBUG                  1

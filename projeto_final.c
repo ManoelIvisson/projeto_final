@@ -1,6 +1,7 @@
 #include "pico/cyw43_arch.h"
 #include "pico/stdlib.h"
 #include "lwip/tcp.h"
+#include "lwip/dns.h"
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -12,6 +13,7 @@
 
 // Estrutura de um produto
 struct Produto {
+    uint id;
     char nome[20];
     float preco;
     float promocao;
@@ -24,6 +26,14 @@ uint cliente_presente = 0;
 #define LED_VERDE 11          // Define o pino do LED de conexão bem sucedida 
 #define WIFI_SSID "Vava"  // Substitua pelo nome da sua rede Wi-Fi
 #define WIFI_PASS "Akira#@2718" // Substitua pela senha da sua rede Wi-Fi
+
+// Thingspeak
+#define CHANNEL_ID 2836570  // Id do canal
+#define WRITE_API_KEY "8AS7O6H17JAT1HHH" //API Key para o canal Tempo de Olho
+
+// URL do ThingSpeak
+#define THINGSPEAK_HOST "api.thingspeak.com"
+#define THINGSPEAK_PORT 80
 
 const uint I2C_SDA = 14;
 const uint I2C_SCL = 15;
@@ -38,17 +48,6 @@ struct render_area frame_area = {
 
 uint8_t ssd[ssd1306_buffer_length];
 
-// Buffer para respostas HTTP
-#define HTTP_RESPONSE "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n" \
-                      "<!DOCTYPE html><html><body>" \
-                      "<h1>Controle do LED</h1>" \
-                      "<p><a href=\"/led/on\">Ligar LED</a></p>" \
-                      "<p><a href=\"/led/off\">Desligar LED</a></p>" \
-                      "<form action=\"/mensagem\" method=\"post\">" \
-                      "<input type=\"text\" name=\"mensagem\"/>" \
-                      "<input type=\"submit\" value=\"Enviar\"/>" \
-                      "</form>" \
-                      "</body></html>\r\n"
 
 void exibirMensagem(char *mensagem[], uint num_mensagens, uint8_t *ssd, struct render_area *frame_area) {
     // Zera o display
@@ -115,65 +114,85 @@ void exibirProduto(struct Produto produto, uint8_t *ssd, struct render_area *fra
     }
     
 
-    
-
     render_on_display(ssd, frame_area);  // Atualiza o display com o novo conteúdo
 }
 
-// Função de callback para processar requisições HTTP
-static err_t http_callback(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err) {
-    char *display_mensagem[80] = {};
 
-    if (p == NULL) {
-        // Cliente fechou a conexão
+struct tcp_pcb *pcb;
+
+// Callback chamado quando a conexão TCP é estabelecida
+static err_t tcp_connected(void *arg, struct tcp_pcb *tpcb, err_t err) {
+    if (err != ERR_OK) {
+        printf("Erro ao conectar ao servidor: %d\n", err);
         tcp_close(tpcb);
-        return ERR_OK;
+        return err;
     }
 
-    // Envia a resposta HTTP
-    tcp_write(tpcb, HTTP_RESPONSE, strlen(HTTP_RESPONSE), TCP_WRITE_FLAG_COPY);
+    printf("Conectado ao ThingSpeak!\n");
 
-    // Libera o buffer recebido
-    pbuf_free(p);
+    // Enviar dados usando tcp_write()
+    char request[256];
+    float tempo = *(float *)arg;  // Recuperar o valor do argumento passado
+    snprintf(request, sizeof(request),
+             "GET /update?api_key=%s&field1=%.2f HTTP/1.1\r\n"
+             "Host: %s\r\n"
+             "Connection: close\r\n\r\n",
+             WRITE_API_KEY, tempo, THINGSPEAK_HOST);
+
+    err = tcp_write(tpcb, request, strlen(request), TCP_WRITE_FLAG_COPY);
+    if (err != ERR_OK) {
+        printf("Erro ao tentar enviar dados ao ThingSpeak\n");
+        tcp_close(tpcb);
+        return err;
+    }
+
+    // Garantir que os dados sejam enviados
+    tcp_output(tpcb);
+    printf("Dados enviados para ThingSpeak!\n");
 
     return ERR_OK;
 }
 
-// Callback de conexão: associa o http_callback à conexão
-static err_t connection_callback(void *arg, struct tcp_pcb *newpcb, err_t err) {
-    tcp_recv(newpcb, http_callback);  // Associa o callback HTTP
-    return ERR_OK;
-}
+// Callback para a resolução DNS
+void dns_callback(const char *name, const ip_addr_t *ipaddr, void *arg) {
+    if (!ipaddr) {
+        printf("Falha ao resolver DNS\n");
+        return;
+    }
 
-// Função de setup do servidor TCP
-static void start_http_server(void) {
-    struct tcp_pcb *pcb = tcp_new();
+    printf("Endereço IP resolvido: %s\n", ipaddr_ntoa(ipaddr));
+
+    // Criar um novo PCB TCP
+    pcb = tcp_new();
     if (!pcb) {
-        printf("Erro ao criar PCB\n");
+        printf("Erro ao criar PCB TCP\n");
         return;
     }
 
-    // Liga o servidor na porta 80
-    if (tcp_bind(pcb, IP_ADDR_ANY, 80) != ERR_OK) {
-        printf("Erro ao ligar o servidor na porta 80\n");
-        return;
+    // Conectar-se ao servidor ThingSpeak
+    err_t err = tcp_connect(pcb, ipaddr, THINGSPEAK_PORT, tcp_connected);
+    if (err != ERR_OK) {
+        printf("Falha ao conectar ao servidor: %d\n", err);
+        tcp_close(pcb);
     }
-
-    pcb = tcp_listen(pcb);  // Coloca o PCB em modo de escuta
-    tcp_accept(pcb, connection_callback);  // Associa o callback de conexão
-
-    printf("Servidor HTTP rodando na porta 80...\n");
 }
 
-void gerenciadorInterrupcoes(uint gpio, uint32_t events){
-    static uint32_t ultimo_tempo = 0;
-    uint32_t tempo_atual = to_ms_since_boot(get_absolute_time());
+// Função para iniciar o envio de dados ao ThingSpeak
+void enviar_dados_thingspeak(float tempo) {
+    ip_addr_t dest_ip;
+    err_t err = dns_gethostbyname(THINGSPEAK_HOST, &dest_ip, dns_callback, &tempo);
 
-    if (tempo_atual - ultimo_tempo < 200) return; // Debounce de 200ms
-    ultimo_tempo = tempo_atual;
-
-    cliente_presente = !cliente_presente;
+    if (err == ERR_OK) {
+        // O endereço IP já está em cache, podemos conectar diretamente
+        dns_callback(THINGSPEAK_HOST, &dest_ip, &tempo);
+    } else if (err == ERR_INPROGRESS) {
+        // A resolução DNS será feita de forma assíncrona
+        printf("Resolvendo DNS...\n");
+    } else {
+        printf("Erro ao iniciar resolução DNS: %d\n", err);
+    }
 }
+
 
 int main() {
     // Configura o LED que indica que o Wifi ainda não foi conectado
@@ -189,9 +208,9 @@ int main() {
     struct Produto produto1;
 
     strcpy(produto1.nome, "Feijao Preto");
+    produto1.id = 1;
     produto1.preco = 8.98;
     produto1.promocao = 6.75;
-
 
     // Inicialização do i2c
     i2c_init(i2c1, ssd1306_i2c_clock * 1000);
@@ -238,13 +257,6 @@ int main() {
         uint8_t *ip_address = (uint8_t*)&(cyw43_state.netif[0].ip_addr.addr);
         printf("Endereço IP %d.%d.%d.%d\n", ip_address[0], ip_address[1], ip_address[2], ip_address[3]);
 
-        static char ip_str[20];  // Buffer para armazenar o IP formatado
-        snprintf(ip_str, sizeof(ip_str), "%d.%d.%d.%d", 
-                ip_address[0], ip_address[1], ip_address[2], ip_address[3]);
-
-        mensagem[0] = "Conectado no IP";
-        mensagem[1] = ip_str;
-
         gpio_put(LED_VERMELHO, 0);
         gpio_put(LED_VERDE, 1);
     }
@@ -252,14 +264,13 @@ int main() {
     printf("Wi-Fi conectado! Galera\n");
     printf("Para ligar ou desligar o LED acesse o Endereço IP seguido de /led/on ou /led/off\n");
 
+    enviar_dados_thingspeak(2000);
+
     // Configuração do Joystick
     adc_init();
 
     adc_gpio_init(26);
     adc_gpio_init(27);
-
-    // Inicia o servidor HTTP
-    start_http_server();
 
     // zera o display inteiro
     memset(ssd, 0, ssd1306_buffer_length);
