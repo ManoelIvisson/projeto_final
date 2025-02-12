@@ -19,6 +19,11 @@ struct Produto {
     float promocao;
 };
 
+typedef struct {
+    float tempo;
+    int id_produto;
+} dados_envio_t;
+
 uint cliente_presente = 0;
 
 
@@ -120,76 +125,101 @@ void exibirProduto(struct Produto produto, uint8_t *ssd, struct render_area *fra
 
 struct tcp_pcb *pcb;
 
-// Callback chamado quando a conexão TCP é estabelecida
+// Callback de conexão TCP
 static err_t tcp_connected(void *arg, struct tcp_pcb *tpcb, err_t err) {
     if (err != ERR_OK) {
         printf("Erro ao conectar ao servidor: %d\n", err);
         tcp_close(tpcb);
+        free(arg); // Libera a memória alocada
         return err;
     }
 
-    printf("Conectado ao ThingSpeak!\n");
+    // Recuperar os valores corretamente
+    dados_envio_t *dados = (dados_envio_t *)arg;
+    float tempo = dados->tempo;
+    int id_produto = dados->id_produto;
 
-    // Enviar dados usando tcp_write()
+    printf("Conectado ao ThingSpeak!\n");
+    printf("Enviando -> Tempo: %.2f | Produto ID: %d\n", tempo, id_produto);
+
+    // Criar requisição HTTP
     char request[256];
-    float tempo = *(float *)arg;  // Recuperar o valor do argumento passado
     snprintf(request, sizeof(request),
-             "GET /update?api_key=%s&field1=%.2f HTTP/1.1\r\n"
+             "GET /update?api_key=%s&field1=%.2f&field2=%d HTTP/1.1\r\n"
              "Host: %s\r\n"
              "Connection: close\r\n\r\n",
-             WRITE_API_KEY, tempo, THINGSPEAK_HOST);
+             WRITE_API_KEY, tempo, id_produto, THINGSPEAK_HOST);
 
     err = tcp_write(tpcb, request, strlen(request), TCP_WRITE_FLAG_COPY);
     if (err != ERR_OK) {
         printf("Erro ao tentar enviar dados ao ThingSpeak\n");
         tcp_close(tpcb);
+        free(dados);  // Libera memória
         return err;
     }
 
-    // Garantir que os dados sejam enviados
     tcp_output(tpcb);
     printf("Dados enviados para ThingSpeak!\n");
 
+    // Libera a memória após o envio
+    free(dados);
     return ERR_OK;
 }
 
-// Callback para a resolução DNS
-void dns_callback(const char *name, const ip_addr_t *ipaddr, void *arg) {
-    if (!ipaddr) {
-        printf("Falha ao resolver DNS\n");
+// Callback do DNS para resolver o nome do host
+static void dns_callback(const char *name, const ip_addr_t *ipaddr, void *callback_arg) {
+    if (ipaddr == NULL) {
+        printf("Erro: DNS não conseguiu resolver %s\n", name);
+        free(callback_arg);
         return;
     }
 
-    printf("Endereço IP resolvido: %s\n", ipaddr_ntoa(ipaddr));
-
-    // Criar um novo PCB TCP
-    pcb = tcp_new();
+    // Criar PCB TCP
+    struct tcp_pcb *pcb = tcp_new();
     if (!pcb) {
         printf("Erro ao criar PCB TCP\n");
+        free(callback_arg);
         return;
     }
 
-    // Conectar-se ao servidor ThingSpeak
-    err_t err = tcp_connect(pcb, ipaddr, THINGSPEAK_PORT, tcp_connected);
+    // Conectar ao ThingSpeak e passar os dados corretamente
+    err_t err = tcp_connect(pcb, ipaddr, 80, tcp_connected);
     if (err != ERR_OK) {
-        printf("Falha ao conectar ao servidor: %d\n", err);
+        printf("Erro ao conectar ao ThingSpeak: %d\n", err);
         tcp_close(pcb);
+        free(callback_arg);
+    } else {
+        // Guardar os dados no PCB (importante para que o callback os receba corretamente)
+        tcp_arg(pcb, callback_arg);
     }
 }
 
 // Função para iniciar o envio de dados ao ThingSpeak
-void enviar_dados_thingspeak(float tempo) {
+void enviar_dados_thingspeak(float tempo, uint id_produto) {
     ip_addr_t dest_ip;
-    err_t err = dns_gethostbyname(THINGSPEAK_HOST, &dest_ip, dns_callback, &tempo);
+
+    // Alocar a estrutura dinamicamente para manter os dados até a conexão
+    dados_envio_t *dados = (dados_envio_t *)malloc(sizeof(dados_envio_t));
+    if (dados == NULL) {
+        printf("Erro ao alocar memória para os dados\n");
+        return;
+    }
+
+    dados->tempo = tempo;
+    dados->id_produto = id_produto;
+
+
+    err_t err = dns_gethostbyname(THINGSPEAK_HOST, &dest_ip, dns_callback, dados);
 
     if (err == ERR_OK) {
         // O endereço IP já está em cache, podemos conectar diretamente
-        dns_callback(THINGSPEAK_HOST, &dest_ip, &tempo);
+        dns_callback(THINGSPEAK_HOST, &dest_ip, dados);
     } else if (err == ERR_INPROGRESS) {
         // A resolução DNS será feita de forma assíncrona
         printf("Resolvendo DNS...\n");
     } else {
         printf("Erro ao iniciar resolução DNS: %d\n", err);
+        free(dados); // Libera a memória se ocorrer uma falha
     }
 }
 
@@ -264,7 +294,7 @@ int main() {
     printf("Wi-Fi conectado! Galera\n");
     printf("Para ligar ou desligar o LED acesse o Endereço IP seguido de /led/on ou /led/off\n");
 
-    enviar_dados_thingspeak(2000);
+    enviar_dados_thingspeak(1200, 1);
 
     // Configuração do Joystick
     adc_init();
