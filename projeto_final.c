@@ -26,6 +26,8 @@ typedef struct {
 
 uint cliente_presente = 0;
 
+// Variável global para controle de tempo
+static uint64_t tempo_inicio = 0;
 
 #define LED_VERMELHO 13          // Define o pino do LED de falha de Conexão
 #define LED_VERDE 11          // Define o pino do LED de conexão bem sucedida 
@@ -267,7 +269,7 @@ int main() {
 
     stdio_init_all();  // Inicializa a saída padrão
     sleep_ms(10000);
-    printf("Iniciando servidor HTTP\n");
+    printf("Iniciando conexões...\n");
 
     // Inicializa o Wi-Fi
     if (cyw43_arch_init()) {
@@ -292,9 +294,8 @@ int main() {
     }
 
     printf("Wi-Fi conectado! Galera\n");
-    printf("Para ligar ou desligar o LED acesse o Endereço IP seguido de /led/on ou /led/off\n");
 
-    enviar_dados_thingspeak(1200, 1);
+    // enviar_dados_thingspeak(1200, 1);
 
     // Configuração do Joystick
     adc_init();
@@ -320,14 +321,23 @@ int main() {
         if (adc_y_raw > 4000) {
             if (!cliente_presente) {
                 exibirProduto(produto1, ssd, &frame_area);
+                tempo_inicio = time_us_64(); // Salva o tempo atual (em microssegundos)
                 cliente_presente = 1;
             }
         } else if (adc_y_raw < 100) {
             if (cliente_presente) {
-                // zera o display inteiro
+                uint64_t tempo_final = time_us_64();  // Tempo atual ao remover o produto
+                float tempo_decorrido_ms = (tempo_final - tempo_inicio) / 1000.0;  // Converte para milissegundos
+
+                // Zera o display inteiro
                 memset(ssd, 0, ssd1306_buffer_length);
                 render_on_display(ssd, &frame_area);
+
+                // Envia os dados ao ThingSpeak
+                enviar_dados_thingspeak(tempo_decorrido_ms, 1);
+
                 cliente_presente = 0;
+                tempo_inicio = 0;
             }
         }
         
