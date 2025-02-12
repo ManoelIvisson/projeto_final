@@ -19,6 +19,13 @@ struct Produto {
     float promocao;
 };
 
+struct Produto produto_atual;
+
+// Produtos para serem exibidos (Apenas na versão protótipo, na real os produtos seriam recuperados de um banco)
+struct Produto produto_atual;
+struct Produto produto1;
+struct Produto produto2;
+
 typedef struct {
     float tempo;
     int id_produto;
@@ -29,8 +36,9 @@ uint cliente_presente = 0;
 // Variável global para controle de tempo
 static uint64_t tempo_inicio = 0;
 
-#define LED_VERMELHO 13          // Define o pino do LED de falha de Conexão
-#define LED_VERDE 11          // Define o pino do LED de conexão bem sucedida 
+#define LED_VERMELHO 13 // Define o pino do LED de falha de Conexão
+#define LED_VERDE 11 // Define o pino do LED de conexão bem sucedida 
+#define BOTAO_PIN 6 // Define o pino do Botao, que no caso é o B
 #define WIFI_SSID "Vava"  // Substitua pelo nome da sua rede Wi-Fi
 #define WIFI_PASS "Akira#@2718" // Substitua pela senha da sua rede Wi-Fi
 
@@ -108,16 +116,20 @@ void exibirProduto(struct Produto produto, uint8_t *ssd, struct render_area *fra
     ssd1306_draw_string(ssd, inicio, y, produto.nome);
     ssd1306_draw_line(ssd, 0, 8, 127, 8, true);
 
+    char preco[10];
+
+    sprintf(preco, "R$ %.2f", produto.preco);  // Converte float para string com 2 casas decimais
+
+    // Verifica se o produto possui promoção
     if (produto.promocao > 0) {
         char promocao[10];
-        char preco[10];
+        sprintf(promocao, "R$ %.2f", produto.promocao);  
 
-        sprintf(promocao, "R$ %.2f", produto.promocao);  // Converte float para string com 2 casas decimais
-        sprintf(preco, "R$ %.2f", produto.preco);  
-
-        ssd1306_draw_string(ssd, 60, 32, promocao);
+        ssd1306_draw_string(ssd, 60, 32, promocao); // Promoção em "evidência"
         ssd1306_draw_string(ssd, 25, 50, preco);
-        ssd1306_draw_line(ssd, 24, 40, 70, 60, true);
+        ssd1306_draw_line(ssd, 24, 40, 70, 60, true); // Linha de corte no preço original para indicar promoção
+    } else {
+        ssd1306_draw_string(ssd, 60, 32, preco); // Preço em "evidência"
     }
     
 
@@ -225,24 +237,66 @@ void enviar_dados_thingspeak(float tempo, uint id_produto) {
     }
 }
 
+void gerenciadorInterrupcoes(uint gpio, uint32_t events){
+    static uint32_t ultimo_tempo = 0;
+    uint32_t tempo_atual = to_ms_since_boot(get_absolute_time());
+
+    if (tempo_atual - ultimo_tempo < 200) return; // Debounce de 200ms
+    ultimo_tempo = tempo_atual;
+
+    if (!cliente_presente) {
+        if (produto_atual.id == 1) {
+            produto_atual.id = produto2.id;
+
+            // Declaração especial já que nome é um array de char e não pode ser atribúido diretamente igual os outros atributos
+            strncpy(produto_atual.nome, produto2.nome, sizeof(produto_atual.nome) - 1);  
+            produto_atual.nome[sizeof(produto_atual.nome) - 1] = '\0';  // Garante que a string seja terminada com '\0'
+
+            produto_atual.preco = produto2.preco;
+            produto_atual.promocao = produto2.promocao;
+        } else {
+            produto_atual.id = produto1.id;
+      
+            strncpy(produto_atual.nome, produto1.nome, sizeof(produto_atual.nome) - 1);  
+            produto_atual.nome[sizeof(produto_atual.nome) - 1] = '\0'; 
+
+            produto_atual.preco = produto1.preco;
+            produto_atual.promocao = produto1.promocao;
+        }
+    }
+}
 
 int main() {
     // Configura o LED que indica que o Wifi ainda não foi conectado
     gpio_init(LED_VERMELHO);
     gpio_set_dir(LED_VERMELHO, GPIO_OUT);
-    gpio_put(LED_VERMELHO, 1);
+    gpio_put(LED_VERMELHO, 1); // Já liga o LED para indicar que o WIFI ainda não está conectado
 
     // Configura o LED que indica que o Wifi foi conectado com sucesso
     gpio_init(LED_VERDE);
     gpio_set_dir(LED_VERDE, GPIO_OUT);
 
-    // Produto para exemplo
-    struct Produto produto1;
-
+    // Produtos para exemplo
+    // Atribuindo valores ao produto1
     strcpy(produto1.nome, "Feijao Preto");
     produto1.id = 1;
     produto1.preco = 8.98;
     produto1.promocao = 6.75;
+
+    // Atribuindo valores ao produto2
+    strcpy(produto2.nome, "Arroz Branco");
+    produto2.id = 2;
+    produto2.preco = 12.99;
+    produto2.promocao = 0;
+
+    // Inicializando o produto atual com "Feijão Preto"
+    produto_atual.id = produto1.id;
+      
+    strncpy(produto_atual.nome, produto1.nome, sizeof(produto_atual.nome) - 1);  
+    produto_atual.nome[sizeof(produto_atual.nome) - 1] = '\0'; 
+
+    produto_atual.preco = produto1.preco;
+    produto_atual.promocao = produto1.promocao;
 
     // Inicialização do i2c
     i2c_init(i2c1, ssd1306_i2c_clock * 1000);
@@ -295,8 +349,13 @@ int main() {
 
     printf("Wi-Fi conectado! Galera\n");
 
-    // enviar_dados_thingspeak(1200, 1);
+    // Configura o Botao para aplicar a troca de produtos (Apenas para o protótipo, no mundo real não seria assim)
+    gpio_init(BOTAO_PIN);
+    gpio_set_dir(BOTAO_PIN, GPIO_IN);
+    gpio_pull_up(BOTAO_PIN);
 
+    gpio_set_irq_enabled_with_callback(BOTAO_PIN, GPIO_IRQ_EDGE_FALL, true, &gerenciadorInterrupcoes);
+    
     // Configuração do Joystick
     adc_init();
 
@@ -320,7 +379,7 @@ int main() {
         
         if (adc_y_raw > 4000) {
             if (!cliente_presente) {
-                exibirProduto(produto1, ssd, &frame_area);
+                exibirProduto(produto_atual, ssd, &frame_area);
                 tempo_inicio = time_us_64(); // Salva o tempo atual (em microssegundos)
                 cliente_presente = 1;
             }
@@ -334,7 +393,7 @@ int main() {
                 render_on_display(ssd, &frame_area);
 
                 // Envia os dados ao ThingSpeak
-                enviar_dados_thingspeak(tempo_decorrido_ms, 1);
+                enviar_dados_thingspeak(tempo_decorrido_ms, produto_atual.id);
 
                 cliente_presente = 0;
                 tempo_inicio = 0;
