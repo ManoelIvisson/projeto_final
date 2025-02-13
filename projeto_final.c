@@ -377,14 +377,14 @@ int main() {
         adc_select_input(1);
         uint adc_x_raw = adc_read();
         
-        if (adc_y_raw > 4000) {
-            if (!cliente_presente) {
+        if (!cliente_presente) {
+            if (adc_y_raw > 4000) {
                 exibirProduto(produto_atual, ssd, &frame_area);
                 tempo_inicio = time_us_64(); // Salva o tempo atual (em microssegundos)
                 cliente_presente = 1;
-            }
-        } else if (adc_y_raw < 100) {
-            if (cliente_presente) {
+            } 
+        } else {
+            if (adc_y_raw < 100) {
                 uint64_t tempo_final = time_us_64();  // Tempo atual ao remover o produto
                 float tempo_decorrido_ms = (tempo_final - tempo_inicio) / 1000.0;  // Converte para milissegundos
 
