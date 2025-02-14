@@ -1,8 +1,8 @@
 # Código do Gráfico do ThingSpeak: Tempo Médio de Exibição por Produto
 
 % Configuração  
-channelID = 2836570; % ID do seu canal  
-readAPIKey = '8AS7O6H17JAT1HHH'; % Chave de leitura (se for um canal privado)  
+channelID = 2836570; % ID do canal  
+readAPIKey = '8AS7O6H17JAT1HHH'; % Chave de leitura 
 
 % Obtendo os últimos 100 valores dos Fields 1 (Tempo) e 2 (Produto ID)  
 data = thingSpeakRead(channelID, 'Fields', [1, 2], 'NumPoints', 100, 'ReadKey', readAPIKey);  
