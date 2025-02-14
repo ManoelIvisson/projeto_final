@@ -1,4 +1,4 @@
-# Código do Gráfico: Tempo Médio de Exibição por Produto
+# Código do Gráfico do ThingSpeak: Tempo Médio de Exibição por Produto
 
 % Configuração  
 channelID = 2836570; % ID do seu canal  
