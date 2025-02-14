@@ -8,8 +8,7 @@
 #include "hardware/adc.h"
 
 #include "exibicao_display.c"
-
-
+#include "configuracoes.c"
 
 typedef struct {
     float tempo;
@@ -20,26 +19,6 @@ uint cliente_presente = 0;
 
 // Variável global para controle de tempo
 static uint64_t tempo_inicio = 0;
-
-#define LED_VERMELHO 13 // Define o pino do LED de falha de Conexão
-#define LED_VERDE 11 // Define o pino do LED de conexão bem sucedida 
-#define BOTAO_PIN 6 // Define o pino do Botao, que no caso é o B
-#define WIFI_SSID "Vava"  // Substitua pelo nome da sua rede Wi-Fi
-#define WIFI_PASS "Akira#@2718" // Substitua pela senha da sua rede Wi-Fi
-
-// Thingspeak
-#define CHANNEL_ID 2836570  // Id do canal
-#define WRITE_API_KEY "8AS7O6H17JAT1HHH" //API Key para o canal Tempo de Olho
-
-// URL do ThingSpeak
-#define THINGSPEAK_HOST "api.thingspeak.com"
-#define THINGSPEAK_PORT 80
-
-
-
-
-
-
 
 struct tcp_pcb *pcb;
 
@@ -148,6 +127,8 @@ void gerenciadorInterrupcoes(uint gpio, uint32_t events){
     if (tempo_atual - ultimo_tempo < 200) return; // Debounce de 200ms
     ultimo_tempo = tempo_atual;
 
+    // Verifica se não há nenhum produto sendo exibido, caso não haja o display alterna para o outro produto (Somente para testes
+    // de envio dos dados para o ThingSpeak)
     if (!cliente_presente) {
         if (produto_atual.id == 1) {
             produto_atual.id = produto2.id;
@@ -281,6 +262,7 @@ int main() {
         adc_select_input(1);
         uint adc_x_raw = adc_read();
         
+        // Verifica se o usuário mexeu no Joytick para ativar ou desativar o display (Novamente, somente no protótipo)
         if (!cliente_presente) {
             if (adc_y_raw > 4000) {
                 exibirProduto(produto_atual, ssd, &frame_area);
