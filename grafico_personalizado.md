@@ -1,4 +1,5 @@
 # Código do Gráfico do ThingSpeak: Tempo Médio de Exibição por Produto
+## Gráfico: https://thingspeak.mathworks.com/apps/matlab_visualizations/605373?height=auto&width=auto
 
 % Configuração  
 channelID = 2836570; % ID do canal  
